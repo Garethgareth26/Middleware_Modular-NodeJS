@@ -1,407 +1,338 @@
-# 🔐 Middleware Modular — Node.js RESTful API
+# middleware-modular-nodejs
 
-> Kumpulan middleware modular siap pakai untuk autentikasi dan otorisasi pada RESTful API berbasis Node.js dan Express.js.  
-> Dikembangkan sebagai luaran penelitian skripsi dengan studi kasus aplikasi **Insightku** — Bangkit Academy.
-
----
-
-## 📋 Daftar Isi
-
-- [Tentang Proyek](#-tentang-proyek)
-- [Middleware yang Tersedia](#-middleware-yang-tersedia)
-- [Arsitektur](#-arsitektur)
-- [Persyaratan](#-persyaratan)
-- [Instalasi](#-instalasi)
-- [Konfigurasi](#-konfigurasi)
-- [Cara Penggunaan](#-cara-penggunaan)
-- [Referensi API](#-referensi-api)
-- [Respons Error](#-respons-error)
-- [Pemetaan OWASP](#-pemetaan-owasp-api-security-top-10)
-- [Lisensi](#-lisensi)
+A minimal, composable middleware stack for Express.js REST APIs.  
+Handles authentication, role-based access, rate limiting, input validation, error handling, and request logging — each in its own isolated module.
 
 ---
 
-## 🧩 Tentang Proyek
+## Why
 
-Repository ini berisi **6 middleware modular** yang dapat digunakan sebagai fondasi sistem keamanan pada RESTful API Node.js. Setiap middleware memiliki **satu tanggung jawab tunggal** (Single Responsibility Principle) dan dapat dipasang, dilepas, atau dikombinasikan secara independen tanpa mempengaruhi komponen lain.
+Most Express.js tutorials dump auth logic inside controllers. This works until it doesn't — when you need to reuse the same check across 12 routes, or when a bug in one endpoint quietly breaks another.
 
-### Masalah yang Diselesaikan
-
-| Masalah Umum | Solusi |
-|---|---|
-| Token JWT tidak diverifikasi dengan benar | `authenticateToken` |
-| Semua user authenticated bisa akses semua endpoint | `checkRole` |
-| Endpoint login rentan brute force | `rateLimiter` |
-| Validasi input tersebar di dalam controller | `validateRequest` |
-| Format error tidak konsisten antar endpoint | `errorHandler` |
-| Tidak ada jejak aktivitas request | `requestLogger` |
+This project structures security concerns as independent middleware layers. Each piece does one thing. You can swap, skip, or extend any of them without touching the rest.
 
 ---
 
-## 📦 Middleware yang Tersedia
+## Stack
 
-| Middleware | Fungsi | Posisi |
+| Layer | Module | Responsibility |
 |---|---|---|
-| `requestLogger` | Audit trail semua HTTP request & response | Paling awal |
-| `globalLimiter` | Proteksi DoS — batasi request per IP | Setelah logger |
-| `authenticateToken` | Verifikasi JWT Bearer token | Sebelum checkRole |
-| `checkRole` | RBAC — kontrol akses berdasarkan role | Setelah auth |
-| `validateRequest` | Validasi input body request | Sebelum controller |
-| `errorHandler` | Penanganan error terpusat | Paling akhir |
+| 1 | `requestLogger` | Record every request and its outcome |
+| 2 | `globalLimiter` | Reject IPs exceeding request threshold |
+| 3 | `authenticateToken` | Verify JWT Bearer token |
+| 4 | `checkRole` | Enforce role-based access per route |
+| 5 | `validateRequest` | Reject malformed input before it hits the controller |
+| 6 | `errorHandler` | Catch everything, respond consistently |
 
 ---
 
-## 🏗 Arsitektur
+## Request lifecycle
 
 ```
-Client Request
-      │
-      ▼
-┌─────────────────┐
-│  requestLogger  │  ← Catat semua request
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  globalLimiter  │  ← Tolak jika over limit → 429
-└────────┬────────┘
-         │
-┌────────▼──────────┐
-│ authenticateToken │  ← Tolak jika token invalid → 401/403
-└────────┬──────────┘
-         │
-┌────────▼────────┐
-│   checkRole     │  ← Tolak jika role tidak sesuai → 403
-└────────┬────────┘
-         │
-┌────────▼──────────┐
-│ validateRequest   │  ← Tolak jika input tidak valid → 400
-└────────┬──────────┘
-         │
-┌────────▼────────┐
-│   Controller    │  ← Proses logika bisnis
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  errorHandler   │  ← Tangkap semua error → format konsisten
-└────────┬────────┘
-         │
-      Response
+incoming request
+       |
+       v
+  requestLogger        — logs all traffic, including rejected requests
+       |
+       v
+  globalLimiter        — 429 if IP exceeds threshold
+       |
+       v
+  authenticateToken    — 401 if no token / 403 if invalid or expired
+       |
+       v
+  checkRole            — 403 if role not permitted
+       |
+       v
+  validateRequest      — 400 if input fails schema
+       |
+       v
+   controller          — your business logic, finally
+       |
+       v
+  errorHandler         — catches any thrown error, formats the response
+       |
+       v
+     response
 ```
 
 ---
 
-## ✅ Persyaratan
+## Requirements
 
-- Node.js >= 14.x
-- Express.js >= 4.x
-- npm atau yarn
+- Node.js >= 14
+- Express.js >= 4
 
 ---
 
-## 🚀 Instalasi
+## Installation
 
-**1. Clone repository**
 ```bash
-git clone https://github.com/username/middleware-modular-nodejs.git
+git clone https://github.com/your-username/middleware-modular-nodejs.git
 cd middleware-modular-nodejs
-```
-
-**2. Install dependensi**
-```bash
 npm install
-```
-
-**3. Buat file `.env`**
-```bash
 cp .env.example .env
 ```
 
-**4. Isi nilai pada `.env`**
-```env
-PORT=3000
-JWT_SECRET=your_very_strong_secret_key
+Edit `.env` and set at minimum:
+
+```
+JWT_SECRET=replace_this_with_a_long_random_string
 ```
 
-**5. Jalankan server contoh**
+Run the example server:
+
 ```bash
 npm run dev
 ```
 
 ---
 
-## ⚙️ Konfigurasi
+## Usage
 
-Salin `.env.example` menjadi `.env` dan sesuaikan nilainya:
+### Basic setup — server.js
 
-```env
-PORT=3000
-NODE_ENV=development
+```js
+require('dotenv').config()
+const express = require('express')
+const app = express()
 
-JWT_SECRET=your_very_strong_jwt_secret_key
-JWT_EXPIRES_IN=1h
-
-DB_HOST=localhost
-DB_NAME=your_db
-DB_USER=root
-DB_PASSWORD=your_password
-```
-
-> ⚠️ **Jangan pernah commit file `.env` ke repository.**  
-> Pastikan `.env` sudah masuk ke `.gitignore`.
-
----
-
-## 📖 Cara Penggunaan
-
-### Integrasi di `server.js`
-
-```javascript
-require('dotenv').config();
-const express = require('express');
-const app = express();
-
-// Import semua middleware
-const { requestLogger }     = require('./middleware/requestLogger');
+const { requestLogger }     = require('./middleware/requestLogger')
 const { globalLimiter,
-        loginLimiter }      = require('./middleware/rateLimiter');
-const { authenticateToken } = require('./middleware/authenticateToken');
-const { checkRole }         = require('./middleware/checkRole');
-const { errorHandler }      = require('./middleware/errorHandler');
+        loginLimiter }      = require('./middleware/rateLimiter')
+const { authenticateToken } = require('./middleware/authenticateToken')
+const { checkRole }         = require('./middleware/checkRole')
+const { errorHandler }      = require('./middleware/errorHandler')
 const { validateLogin,
         validateRegister,
-        validate }          = require('./middleware/validateRequest');
+        validate }          = require('./middleware/validateRequest')
 
-app.use(express.json());
+app.use(express.json())
+app.use(requestLogger)   // must be first
+app.use(globalLimiter)   // must be second
 
-// Urutan pemasangan global middleware (PENTING)
-app.use(requestLogger);   // 1. Logger — paling atas
-app.use(globalLimiter);   // 2. Rate limiter global
+// public routes
+app.post('/auth/register', validateRegister, validate, registerController)
+app.post('/auth/login',    loginLimiter, validateLogin, validate, loginController)
 
-// Route publik
-app.post('/api/auth/login',    loginLimiter, validateLogin, validate, loginController);
-app.post('/api/auth/register', validateRegister, validate, registerController);
+// protected routes
+app.get('/profile',        authenticateToken, profileController)
+app.get('/dashboard',      authenticateToken, checkRole('user', 'admin'), dashboardController)
+app.get('/admin/users',    authenticateToken, checkRole('admin'), adminController)
 
-// Route terproteksi
-app.get('/api/profile',        authenticateToken, profileController);
-app.get('/api/dashboard',      authenticateToken, checkRole('user', 'admin'), dashboardController);
+app.use(errorHandler) // must be last
 
-// Route khusus admin
-app.get('/api/admin/users',    authenticateToken, checkRole('admin'), adminController);
-
-// Error handler — harus paling bawah
-app.use(errorHandler);
-
-app.listen(3000);
+app.listen(process.env.PORT || 3000)
 ```
 
 ---
 
-## 📚 Referensi API
+## Middleware reference
 
-### `authenticateToken`
+### authenticateToken
 
-Memverifikasi JWT dari header `Authorization: Bearer <token>`.
+Reads the `Authorization` header, extracts the Bearer token, and verifies it against `JWT_SECRET`.  
+On success, attaches the decoded payload to `req.user`.
 
-```javascript
-const { authenticateToken } = require('./middleware/authenticateToken');
+```js
+// JWT payload shape expected:
+// { userId, username, role }
 
-// Pasang pada route terproteksi
-router.get('/profile', authenticateToken, controller);
+router.get('/me', authenticateToken, (req, res) => {
+  res.json(req.user)
+})
 ```
 
-**Syarat JWT Payload:**
-```json
-{
-  "userId": 1,
-  "username": "johndoe",
-  "role": "user"
-}
-```
-
-| Kondisi | Status | Pesan |
-|---|---|---|
-| Tidak ada token | 401 | Access token required |
-| Token tidak valid | 403 | Invalid or expired token |
-| Token kadaluarsa | 403 | Invalid or expired token |
-| Token valid | Lanjut ke next() | — |
+| Case | Status |
+|---|---|
+| No token | 401 |
+| Invalid or tampered | 403 |
+| Expired | 403 |
+| Valid | passes to next() |
 
 ---
 
-### `checkRole(...roles)`
+### checkRole(...roles)
 
-Membatasi akses endpoint berdasarkan role pengguna.  
-Harus dipasang **setelah** `authenticateToken`.
+Higher-order function. Pass one or more allowed roles as arguments.  
+Must be placed after `authenticateToken` — it reads from `req.user.role`.
 
-```javascript
-const { checkRole } = require('./middleware/checkRole');
-
-// Hanya admin
-router.get('/admin', authenticateToken, checkRole('admin'), controller);
-
-// Admin dan moderator
-router.get('/manage', authenticateToken, checkRole('admin', 'moderator'), controller);
-
-// Semua role yang sudah login
-router.get('/feed', authenticateToken, checkRole('user', 'admin'), controller);
+```js
+checkRole('admin')                   // single role
+checkRole('admin', 'moderator')      // multiple roles
+checkRole('user', 'admin')           // all authenticated users
 ```
 
-| Kondisi | Status | Pesan |
-|---|---|---|
-| Role tidak sesuai | 403 | Forbidden: requires role [admin] |
-| Role sesuai | Lanjut ke next() | — |
+| Case | Status |
+|---|---|
+| req.user missing | 401 |
+| Role not in allowed list | 403 |
+| Role matches | passes to next() |
 
 ---
 
-### `rateLimiter`
+### rateLimiter
 
-Tiga level pembatasan request:
+Three pre-configured limiters using `express-rate-limit`.
 
-```javascript
-const { loginLimiter, authLimiter, globalLimiter } = require('./middleware/rateLimiter');
-
-app.use(globalLimiter);                               // Global — 100 req/15 menit
-app.post('/auth/login',    loginLimiter, controller); // Login — 5 req/15 menit
-app.post('/auth/register', authLimiter, controller);  // Register — 10 req/15 menit
+```js
+const { loginLimiter, authLimiter, globalLimiter } = require('./middleware/rateLimiter')
 ```
 
-| Limiter | Batas | Window | Endpoint |
+| Export | Max | Window | Use on |
 |---|---|---|---|
-| `loginLimiter` | 5 req | 15 menit | POST /login |
-| `authLimiter` | 10 req | 15 menit | POST /register, /verify-otp |
-| `globalLimiter` | 100 req | 15 menit | Semua endpoint |
+| `loginLimiter` | 5 | 15 min | POST /login |
+| `authLimiter` | 10 | 15 min | POST /register, /verify-otp |
+| `globalLimiter` | 100 | 15 min | all routes (global) |
+
+All blocked requests are logged with `[RATE LIMIT]` prefix including IP and timestamp.
 
 ---
 
-### `validateRequest`
+### validateRequest
 
-Validasi input menggunakan `express-validator`.  
-**Selalu sertakan `validate` setelah skema validasi.**
+Schemas are built with `express-validator`.  
+Always pair a schema with the `validate` handler — it collects and formats errors.
 
-```javascript
-const { validateLogin, validateRegister, validate } = require('./middleware/validateRequest');
+```js
+const { validateLogin, validate } = require('./middleware/validateRequest')
 
-router.post('/login',    validateLogin,    validate, controller);
-router.post('/register', validateRegister, validate, controller);
+router.post('/login', validateLogin, validate, controller)
 ```
 
-**Menambah skema validasi baru:**
-```javascript
-// Di validateRequest.js
+Available schemas:  
+`validateRegister` `validateLogin` `validateUpdateProfile` `validateChangePassword` `validateCreateResource`
+
+Adding a new schema:
+
+```js
+// in validateRequest.js
 const validateCreatePost = [
   body('title').trim().notEmpty().withMessage('Title is required'),
-  body('content').trim().isLength({ min: 10 }).withMessage('Content too short'),
-];
+  body('content').isLength({ min: 10 }).withMessage('Content too short'),
+]
 
-module.exports = { ..., validateCreatePost };
+module.exports = { ..., validateCreatePost }
 ```
 
----
+Error response shape:
 
-### `errorHandler`
-
-Dipasang **satu kali** di paling bawah `server.js`.
-
-```javascript
-app.use(errorHandler); // setelah semua route
-```
-
-**Melempar error dari controller:**
-```javascript
-// Error sederhana
-next(new Error('Something went wrong'));
-
-// Error dengan status custom
-const err = new Error('User not found');
-err.statusCode = 404;
-next(err);
-```
-
----
-
-### `requestLogger`
-
-```javascript
-app.use(requestLogger); // harus paling atas
-```
-
-**Contoh output di terminal:**
-```
-[2026-03-05T12:56:57.725Z] → INCOMING GET /api/dashboard from IP: ::1
-[2026-03-05T12:56:57.732Z] ← RESPONSE GET /api/dashboard 200 | user: johndoe | 7ms
-
-[2026-03-05T12:59:25.380Z] → INCOMING GET /api/admin/users from IP: ::1
-[2026-03-05T12:59:25.383Z] ← RESPONSE GET /api/admin/users 403 | user: johndoe | 3ms
-[SECURITY LOG] 403 on GET /api/admin/users — IP: ::1 — user: johndoe
-```
-
----
-
-## ⚠️ Respons Error
-
-Seluruh respons error menggunakan format JSON yang konsisten:
-
-```json
-{
-  "success": false,
-  "error": "Error type",
-  "message": "Human-readable description"
-}
-```
-
-**Respons validasi (400):**
 ```json
 {
   "success": false,
   "errors": [
-    { "field": "email", "message": "Invalid email format" },
-    { "field": "password", "message": "Password must be at least 8 characters" }
+    { "field": "email", "message": "Invalid email format" }
   ]
 }
 ```
 
 ---
 
-## 🛡 Pemetaan OWASP API Security Top 10
+### errorHandler
 
-| Kode | Ancaman | Middleware |
-|---|---|---|
-| API1 | Broken Object Level Authorization | `checkRole` |
-| API2 | Broken Authentication | `authenticateToken` + `rateLimiter` |
-| API4 | Unrestricted Resource Consumption | `rateLimiter` |
-| API5 | Broken Function Level Authorization | `checkRole` |
-| API7 | Server Side Request Forgery | `validateRequest` |
-| API8 | Security Misconfiguration | `errorHandler` |
-| API9 | Improper Inventory Management | `requestLogger` |
-| API10 | Unsafe Consumption of APIs | `validateRequest` + `errorHandler` |
+Catches anything passed to `next(err)`.  
+Handles JWT errors, Sequelize errors, Mongoose errors, and custom errors.  
+Returns clean JSON without leaking stack traces.
+
+```js
+// throw from anywhere
+const err = new Error('Not found')
+err.statusCode = 404
+next(err)
+```
+
+All errors follow the same shape:
+
+```json
+{
+  "success": false,
+  "error": "Error type",
+  "message": "What went wrong"
+}
+```
 
 ---
 
-## 📁 Struktur Proyek
+### requestLogger
+
+Logs every incoming request and its response.  
+Requests that result in 4xx or 5xx are additionally marked as `[SECURITY LOG]`.
+
+```
+[2026-03-05T12:56:57.725Z] → INCOMING GET /api/dashboard from IP: ::1
+[2026-03-05T12:56:57.732Z] ← RESPONSE GET /api/dashboard 200 | user: gareth | 7ms
+
+[2026-03-05T12:59:25.380Z] → INCOMING GET /api/admin/users from IP: ::1
+[2026-03-05T12:59:25.383Z] ← RESPONSE GET /api/admin/users 403 | user: userbiasa | 3ms
+[SECURITY LOG] 403 on GET /api/admin/users — IP: ::1 — user: userbiasa
+
+[RATE LIMIT] Login blocked — IP: ::1 — 2026-03-05T13:00:27.642Z
+```
+
+---
+
+## Environment variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `JWT_SECRET` | yes | — | Secret key for signing/verifying JWT |
+| `JWT_EXPIRES_IN` | no | `1h` | Token expiry duration |
+| `PORT` | no | `3000` | Server port |
+| `NODE_ENV` | no | `development` | Environment flag |
+
+---
+
+## Project structure
 
 ```
 middleware-modular-nodejs/
 ├── middleware/
-│   ├── authenticateToken.js   ← Verifikasi JWT
-│   ├── checkRole.js           ← Kontrol akses RBAC
-│   ├── errorHandler.js        ← Penanganan error terpusat
-│   ├── rateLimiter.js         ← Proteksi brute force & DoS
-│   ├── validateRequest.js     ← Validasi input
-│   └── requestLogger.js       ← Audit trail
+│   ├── authenticateToken.js
+│   ├── checkRole.js
+│   ├── errorHandler.js
+│   ├── rateLimiter.js
+│   ├── requestLogger.js
+│   └── validateRequest.js
 ├── examples/
-│   └── server.example.js      ← Contoh implementasi lengkap
-├── .env.example               ← Template environment variable
+│   └── server.example.js
+├── .env.example
+├── .gitignore
 ├── package.json
 └── README.md
 ```
 
 ---
 
-## 📄 Lisensi
+## Security coverage
 
-MIT License — bebas digunakan, dimodifikasi, dan didistribusikan dengan menyertakan atribusi.
+Addresses the following [OWASP API Security Top 10](https://owasp.org/API-Security/editions/2023/en/0x11-t10/) risks:
+
+```
+API1  Broken Object Level Authorization      checkRole
+API2  Broken Authentication                  authenticateToken + rateLimiter
+API4  Unrestricted Resource Consumption      rateLimiter
+API5  Broken Function Level Authorization    checkRole
+API7  Server Side Request Forgery            validateRequest
+API8  Security Misconfiguration              errorHandler
+API9  Improper Inventory Management          requestLogger
+API10 Unsafe Consumption of APIs             validateRequest + errorHandler
+```
 
 ---
 
-> Dikembangkan sebagai luaran penelitian skripsi  
-> **"Implementasi Middleware Modular untuk Autentikasi dan Hak Akses pada RESTful API Node.js"**  
-> Universitas Singaperbangsa Karawang
+## Known limitations
+
+- JWT tokens cannot be invalidated before expiry. Implement a token blacklist with Redis if revocation is needed.
+- Rate limiting state is stored in-memory. Use `rate-limit-redis` for multi-instance deployments.
+- Logs are written to stdout. For production, replace `console.log` in `requestLogger.js` with Winston or Pino.
+
+---
+
+## License
+
+MIT
+
+---
+
+*Developed as part of undergraduate thesis research.*  
+*Universitas Singaperbangsa Karawang — 2026.*
