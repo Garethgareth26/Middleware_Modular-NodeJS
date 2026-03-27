@@ -15,29 +15,30 @@ const express = require('express');
 const app = express();
 
 // ── Import Middleware ─────────────────────────────────────────
-const { requestLogger }     = require('./middleware/requestLogger');
+const { requestLogger }       = require('../middleware/requestLogger');
 const { globalLimiter,
         loginLimiter,
-        authLimiter }       = require('./middleware/rateLimiter');
-const { authenticateToken } = require('./middleware/authenticateToken');
-const { checkRole }         = require('./middleware/checkRole');
-const { errorHandler }      = require('./middleware/errorHandler');
+        authLimiter }         = require('../middleware/rateLimiter');
+const { authenticateToken }   = require('../middleware/authenticateToken');
+const { checkRole }           = require('../middleware/checkRole');
+const { errorHandler }        = require('../middleware/errorHandler');
 const {
   validate,
   validateRegister,
   validateLogin,
-  validateChangePassword,
   validateUpdateProfile,
-}                           = require('./middleware/validateRequest');
+  validateChangePassword,
+  validateCreateResource,
+}                             = require('../middleware/validateRequest');
 
 // ── Konfirmasi Middleware Aktif ───────────────────────────────
 console.log('Middleware aktif:');
-console.log('  ✅ requestLogger     — audit trail');
-console.log('  ✅ globalLimiter     — proteksi brute force global');
-console.log('  ✅ authenticateToken — verifikasi JWT');
-console.log('  ✅ checkRole         — kontrol akses RBAC');
-console.log('  ✅ validateRequest   — validasi input');
-console.log('  ✅ errorHandler      — penanganan error terpusat');
+console.log('  \u2705 requestLogger     \u2014 audit trail');
+console.log('  \u2705 globalLimiter     \u2014 proteksi brute force global');
+console.log('  \u2705 authenticateToken \u2014 verifikasi JWT');
+console.log('  \u2705 checkRole         \u2014 kontrol akses RBAC');
+console.log('  \u2705 validateRequest   \u2014 validasi input');
+console.log('  \u2705 errorHandler      \u2014 penanganan error terpusat');
 
 // ── Middleware Global (urutan penting) ────────────────────────
 app.use(requestLogger);           // 1. Catat semua request (paling atas)
@@ -45,36 +46,43 @@ app.use(globalLimiter);           // 2. Batasi request global
 app.use(express.json());          // 3. Parse JSON body
 app.use(express.urlencoded({ extended: true }));
 
-// ── Contoh Route: Publik (tanpa autentikasi) ─────────────────
+// ── Route: Publik ─────────────────────────────────────────────
 app.post(
   '/api/auth/register',
-  authLimiter,          // Batasi percobaan registrasi
-  validateRegister,     // Validasi input
-  validate,             // Jalankan validasi
+  authLimiter,
+  validateRegister,
+  validate,
   (req, res) => {
-    // Logika register ada di sini (atau di controller terpisah)
     res.status(201).json({ success: true, message: 'User registered successfully' });
   }
 );
 
 app.post(
   '/api/auth/login',
-  loginLimiter,         // Batasi percobaan login (maks 5x/15 menit)
-  validateLogin,        // Validasi input
+  loginLimiter,
+  validateLogin,
   validate,
   (req, res) => {
-    // Logika login ada di sini
-    // Pastikan JWT payload memuat { userId, username, role }
     res.status(200).json({ success: true, token: '<jwt_token>' });
   }
 );
 
-// ── Contoh Route: Terproteksi (perlu token) ──────────────────
+// ── Route: Terproteksi ────────────────────────────────────────
 app.get(
   '/api/profile',
-  authenticateToken,    // Verifikasi JWT
+  authenticateToken,
   (req, res) => {
     res.status(200).json({ success: true, user: req.user });
+  }
+);
+
+app.put(
+  '/api/profile/update',
+  authenticateToken,
+  validateUpdateProfile,
+  validate,
+  (req, res) => {
+    res.status(200).json({ success: true, message: 'Profile updated' });
   }
 );
 
@@ -88,23 +96,34 @@ app.put(
   }
 );
 
-// ── Contoh Route: Hanya Admin ─────────────────────────────────
+// ── Route: Hanya Admin ────────────────────────────────────────
 app.get(
   '/api/admin/users',
-  authenticateToken,    // 1. Verifikasi token
-  checkRole('admin'),   // 2. Pastikan role admin
+  authenticateToken,
+  checkRole('admin'),
   (req, res) => {
     res.status(200).json({ success: true, users: [] });
   }
 );
 
-// ── Contoh Route: Multi-Role ──────────────────────────────────
+// ── Route: Multi-Role ─────────────────────────────────────────
 app.get(
   '/api/dashboard',
   authenticateToken,
-  checkRole('user', 'admin', 'moderator'), // Semua role yang login
+  checkRole('user', 'admin'),
   (req, res) => {
     res.status(200).json({ success: true, data: {} });
+  }
+);
+
+// ── Route: Resource Generic ───────────────────────────────────
+app.post(
+  '/api/resource',
+  authenticateToken,
+  validateCreateResource,
+  validate,
+  (req, res) => {
+    res.status(201).json({ success: true, message: 'Resource created' });
   }
 );
 
@@ -114,7 +133,7 @@ app.use(errorHandler);
 // ── Start Server ──────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`\nServer running on port ${PORT}`);
+  console.log(`\nServer running on http://localhost:${PORT}`);
 });
 
 module.exports = app;
